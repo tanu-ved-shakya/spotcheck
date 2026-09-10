@@ -89,6 +89,7 @@ cap = cv2.VideoCapture(
     "test_video.mp4"
 )
 
+
 if not cap.isOpened():
 
     print(
@@ -98,10 +99,40 @@ if not cap.isOpened():
     exit()
 
 
+# ==================================================
+# FRAME SAMPLING
+# ==================================================
+
+# Process one frame every N seconds.
+#
+# 2 seconds is our starting point.
+#
+# YOLO is NOT executed on every camera frame.
+
+SAMPLE_INTERVAL = 2.0
+
+last_sample_time = -SAMPLE_INTERVAL
+
+
+# ==================================================
+# DISPLAY
+# ==================================================
+
 cv2.namedWindow(
     "SpotCheck",
     cv2.WINDOW_NORMAL
 )
+
+
+# ==================================================
+# CURRENT DETECTIONS
+# ==================================================
+
+# We keep the most recent YOLO detections
+# between sampled frames.
+
+person_detections = []
+chair_detections = []
 
 
 # ==================================================
@@ -112,6 +143,7 @@ while True:
 
     ret, frame = cap.read()
 
+
     if not ret:
 
         print(
@@ -121,100 +153,143 @@ while True:
         break
 
 
-    # ==================================================
-    # YOLO DETECTION
-    # ==================================================
+    # --------------------------------------------------
+    # Get video timestamp
+    # --------------------------------------------------
 
-    detections = detector.detect(
-        frame
+    current_time = (
+        cap.get(
+            cv2.CAP_PROP_POS_MSEC
+        ) / 1000.0
     )
 
 
-    person_detections = []
-    chair_detections = []
+    # --------------------------------------------------
+    # Run YOLO only at sampling intervals
+    # --------------------------------------------------
+
+    if (
+        current_time - last_sample_time
+        >= SAMPLE_INTERVAL
+    ):
+
+        last_sample_time = current_time
 
 
-    # ==================================================
-    # FILTER DETECTIONS
-    # ==================================================
+        # ==============================================
+        # YOLO DETECTION
+        # ==============================================
 
-    for detection in detections:
-
-        confidence = detection[
-            "confidence"
-        ]
-
-        if confidence < 0.4:
-            continue
-
-
-        if detection["class"] == "person":
-
-            person_detections.append(
-                detection
-            )
-
-
-        elif detection["class"] == "chair":
-
-            chair_detections.append(
-                detection
-            )
-
-
-    # ==================================================
-    # FIND OCCUPIED SEATS
-    # ==================================================
-
-    detected_seats = set()
-
-
-    for person in person_detections:
-
-        person_bbox = person[
-            "bbox"
-        ]
-
-
-        seat_id, score, debug_info = (
-            seat_mapper.find_seat(
-                person_bbox,
-                chair_detections
-            )
+        detections = detector.detect(
+            frame
         )
 
 
-        if seat_id is not None:
+        person_detections = []
+        chair_detections = []
 
-            detected_seats.add(
-                seat_id
+
+        # ==============================================
+        # FILTER DETECTIONS
+        # ==============================================
+
+        for detection in detections:
+
+            confidence = detection[
+                "confidence"
+            ]
+
+
+            if confidence < 0.4:
+                continue
+
+
+            if detection["class"] == "person":
+
+                person_detections.append(
+                    detection
+                )
+
+
+            elif detection["class"] == "chair":
+
+                chair_detections.append(
+                    detection
+                )
+
+
+        # ==============================================
+        # FIND SEATS
+        # ==============================================
+
+        detected_seats = set()
+
+
+        for person in person_detections:
+
+            person_bbox = person[
+                "bbox"
+            ]
+
+
+            seat_id, score, debug_info = (
+                seat_mapper.find_seat(
+                    person_bbox,
+                    chair_detections
+                )
             )
 
-            print(
-                f"Person -> {seat_id} | "
-                f"Score: {score:.2f}"
-            )
 
-            # Uncomment this while debugging:
-            #
-            # print(debug_info)
+            if seat_id is not None:
+
+                detected_seats.add(
+                    seat_id
+                )
 
 
-        else:
+                print(
+                    f"Time: {current_time:.1f}s | "
+                    f"Person -> {seat_id} | "
+                    f"Score: {score:.2f}"
+                )
 
-            print(
-                f"Person -> No Seat | "
-                f"Best Score: {score:.2f}"
-            )
+
+                # Uncomment when tuning:
+                #
+                # print(debug_info)
 
 
-    # ==================================================
-    # TEMPORAL SMOOTHING
-    # ==================================================
+            else:
 
-    seat_states = smoother.update(
-        detected_seats
-    )
+                print(
+                    f"Time: {current_time:.1f}s | "
+                    f"Person -> No Seat | "
+                    f"Best Score: {score:.2f}"
+                )
+
+
+        # ==============================================
+        # TEMPORAL SMOOTHING
+        # ==============================================
+
+        seat_states = smoother.update(
+            detected_seats
+        )
+
+
+    else:
+
+        # No YOLO inference on this frame.
+        #
+        # Keep existing seat states.
+
+        seat_states = {
+            seat["id"]:
+            smoother.states[
+                seat["id"]
+            ]["state"]
+            for seat in seats
+        }
 
 
     # ==================================================
@@ -389,7 +464,9 @@ while True:
     display_width = 1280
     display_height = 720
 
+
     h, w = frame.shape[:2]
+
 
     scale = min(
 
@@ -397,6 +474,7 @@ while True:
 
         display_height / h
     )
+
 
     new_width = int(
         w * scale

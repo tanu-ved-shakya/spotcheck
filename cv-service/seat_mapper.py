@@ -118,12 +118,9 @@ class SeatMapper:
             # Seat anchor
             # ------------------------------------------
 
-            anchor_x = (x1 + x2) / 2
-            anchor_y = (y1 + y2) / 2
-
             anchor = (
-                anchor_x,
-                anchor_y
+                (x1 + x2) / 2,
+                (y1 + y2) / 2
             )
 
             # ------------------------------------------
@@ -149,9 +146,7 @@ class SeatMapper:
             ) else 0.0
 
             # ------------------------------------------
-            # Chair overlap
-            # Only chairs belonging to this seat
-            # are considered.
+            # Chair overlap for this seat
             # ------------------------------------------
 
             best_overlap = 0.0
@@ -160,31 +155,24 @@ class SeatMapper:
 
                 chair_bbox = chair["bbox"]
 
-                chair_x1, chair_y1, chair_x2, chair_y2 = chair_bbox
-
-                chair_center_x = (
-                    chair_x1 + chair_x2
-                ) / 2
-
-                chair_center_y = (
-                    chair_y1 + chair_y2
-                ) / 2
-
-                chair_center = (
-                    chair_center_x,
-                    chair_center_y
+                chair_x1, chair_y1, chair_x2, chair_y2 = (
+                    chair_bbox
                 )
 
+                chair_center = (
+                    (chair_x1 + chair_x2) / 2,
+                    (chair_y1 + chair_y2) / 2
+                )
+
+                # Only use chairs belonging to this seat
                 if self.point_inside_roi(
                     chair_center,
                     roi
                 ):
 
-                    overlap = (
-                        self.calculate_overlap(
-                            person_bbox,
-                            chair_bbox
-                        )
+                    overlap = self.calculate_overlap(
+                        person_bbox,
+                        chair_bbox
                     )
 
                     best_overlap = max(
@@ -197,7 +185,6 @@ class SeatMapper:
             # ------------------------------------------
 
             score = (
-
                 self.weight_distance
                 * distance_score
 
