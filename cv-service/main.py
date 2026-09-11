@@ -3,6 +3,7 @@ import cv2
 from detector import ObjectDetector
 from seat_mapper import SeatMapper
 from temporal_smoother import TemporalSmoother
+from occupancy_events import OccupancyEventGenerator
 
 
 # ==================================================
@@ -78,6 +79,14 @@ smoother = TemporalSmoother(
     occupy_time=5,
 
     release_time=3
+)
+
+# ==================================================
+# OCCUPANCY EVENT GENERATOR
+# ==================================================
+
+event_generator = OccupancyEventGenerator(
+    camera_id="CAM_01"
 )
 
 
@@ -275,6 +284,21 @@ while True:
         seat_states = smoother.update(
             detected_seats
         )
+
+        # ==================================================
+        # GENERATE OCCUPANCY EVENTS
+        # ==================================================
+
+        events = event_generator.generate_events(
+            seat_states
+        )
+
+        for event in events:
+
+            print(
+                "OCCUPANCY EVENT:",
+                event
+            )
 
 
     else:
