@@ -4,6 +4,7 @@ from detector import ObjectDetector
 from seat_mapper import SeatMapper
 from temporal_smoother import TemporalSmoother
 from occupancy_events import OccupancyEventGenerator
+from redis_stream import RedisStreamProducer
 
 
 # ==================================================
@@ -89,6 +90,20 @@ event_generator = OccupancyEventGenerator(
     camera_id="CAM_01"
 )
 
+# ==================================================
+# REDIS STREAM PRODUCER
+# ==================================================
+
+redis_producer = RedisStreamProducer(
+    host="localhost",
+    port=6379,
+    stream_name="seat_occupancy_events"
+)
+
+print(
+    "Redis connected:",
+    redis_producer.test_connection()
+)
 
 # ==================================================
 # VIDEO
@@ -295,11 +310,19 @@ while True:
 
         for event in events:
 
+            message_id = redis_producer.publish_event(
+                event
+            )
+
             print(
                 "OCCUPANCY EVENT:",
                 event
             )
 
+            print(
+                "Redis Stream ID:",
+                message_id
+            )
 
     else:
 
