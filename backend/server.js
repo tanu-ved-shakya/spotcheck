@@ -1,4 +1,5 @@
 const express = require("express");
+const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
 
@@ -17,13 +18,21 @@ const {
 
 const app = express();
 
+
+// Allow requests from React frontend
+app.use(cors({
+    origin: "http://localhost:5173"
+}));
+
+
+// Create HTTP server
 const httpServer = http.createServer(app);
 
 
 // Create Socket.IO server
 const io = new Server(httpServer, {
     cors: {
-        origin: "*"
+        origin: "http://localhost:5173"
     }
 });
 
@@ -86,7 +95,7 @@ io.on("connection", (socket) => {
 const PORT = 3000;
 
 
-// Start HTTP + Socket.IO server
+// Start server
 const server = httpServer.listen(PORT, async () => {
 
     console.log(
