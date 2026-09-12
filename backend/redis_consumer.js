@@ -1,34 +1,19 @@
 require("dotenv/config");
 
 const { createClient } = require("redis");
-const { PrismaClient } = require("@prisma/client");
-const { PrismaMariaDb } = require("@prisma/adapter-mariadb");
-
-const databaseUrl = new URL(process.env.DATABASE_URL);
-
-const adapter = new PrismaMariaDb({
-    host: databaseUrl.hostname,
-    port: Number(databaseUrl.port),
-    user: decodeURIComponent(databaseUrl.username),
-    password: decodeURIComponent(databaseUrl.password),
-    database: databaseUrl.pathname.replace("/", "")
-});
-
-const prisma = new PrismaClient({
-    adapter
-});
+const prisma = require("./config/prisma");
 
 const redisClient = createClient({
     url: "redis://localhost:6379"
 });
+
+let shuttingDown = false;
 
 redisClient.on("error", (error) => {
     if (!shuttingDown) {
         console.error("Redis Client Error:", error);
     }
 });
-
-let shuttingDown = false;
 
 async function processEvent(event) {
     const camera = await prisma.camera.findUnique({
@@ -173,7 +158,6 @@ async function startConsumer() {
                         );
 
                     } catch (error) {
-
                         console.error(
                             "Event processing failed:",
                             error.message
@@ -187,7 +171,6 @@ async function startConsumer() {
             }
 
         } catch (error) {
-
             if (!shuttingDown) {
                 console.error(
                     "Error while consuming:",
