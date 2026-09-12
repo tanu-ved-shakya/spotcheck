@@ -1,14 +1,47 @@
 const express = require("express");
-const prisma = require("./config/prisma");
+const http = require("http");
+const { Server } = require("socket.io");
 
+const prisma = require("./config/prisma");
 const seatRoutes = require("./routes/seatRoutes");
+
+const {
+    startRedisConsumer,
+    stopRedisConsumer
+} = require("./services/redisConsumer");
+
+const {
+    setSocketIO
+} = require("./config/socket");
+
 
 const app = express();
 
+const httpServer = http.createServer(app);
+
+
+// Create Socket.IO server
+const io = new Server(httpServer, {
+    cors: {
+        origin: "*"
+    }
+});
+
+
+// Make Socket.IO instance available
+// to other backend modules
+setSocketIO(io);
+
+
+// Middleware
 app.use(express.json());
 
+
+// REST API routes
 app.use("/api/seats", seatRoutes);
 
+
+// Health check
 app.get("/api/health", async (req, res) => {
     try {
         await prisma.$queryRaw`SELECT 1`;
@@ -31,24 +64,93 @@ app.get("/api/health", async (req, res) => {
     }
 });
 
+
+// Socket.IO connection handling
+io.on("connection", (socket) => {
+
+    console.log(
+        `Client connected: ${socket.id}`
+    );
+
+    socket.on("disconnect", () => {
+
+        console.log(
+            `Client disconnected: ${socket.id}`
+        );
+
+    });
+
+});
+
+
 const PORT = 3000;
 
-const server = app.listen(PORT, () => {
+
+// Start HTTP + Socket.IO server
+const server = httpServer.listen(PORT, async () => {
+
     console.log(
         `Server running on http://localhost:${PORT}`
     );
+
+    console.log(
+        "Socket.IO server is ready."
+    );
+
+    try {
+
+        await startRedisConsumer();
+
+    } catch (error) {
+
+        console.error(
+            "Redis consumer failed to start:",
+            error
+        );
+
+    }
+
 });
 
+
+// Graceful shutdown
 async function shutdown() {
-    console.log("\nShutting down server...");
 
-    await prisma.$disconnect();
+    console.log(
+        "\nShutting down server..."
+    );
 
-    server.close(() => {
-        console.log("Server shut down cleanly.");
-        process.exit(0);
-    });
+    try {
+
+        await stopRedisConsumer();
+
+        await prisma.$disconnect();
+
+        io.close();
+
+        server.close(() => {
+
+            console.log(
+                "Server shut down cleanly."
+            );
+
+            process.exit(0);
+
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Error during shutdown:",
+            error
+        );
+
+        process.exit(1);
+
+    }
+
 }
+
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
