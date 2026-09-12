@@ -1,43 +1,100 @@
-const { createClient } = require("redis");
+require("dotenv/config");
 
+const { createClient } = require("redis");
+const { PrismaClient } = require("@prisma/client");
+const { PrismaMariaDb } = require("@prisma/adapter-mariadb");
+
+const databaseUrl = new URL(process.env.DATABASE_URL);
+
+const adapter = new PrismaMariaDb({
+    host: databaseUrl.hostname,
+    port: Number(databaseUrl.port),
+    user: decodeURIComponent(databaseUrl.username),
+    password: decodeURIComponent(databaseUrl.password),
+    database: databaseUrl.pathname.replace("/", "")
+});
+
+const prisma = new PrismaClient({
+    adapter
+});
 
 const redisClient = createClient({
     url: "redis://localhost:6379"
 });
 
-
 redisClient.on("error", (error) => {
-
-    console.error(
-        "Redis Client Error:",
-        error
-    );
-
+    if (!shuttingDown) {
+        console.error("Redis Client Error:", error);
+    }
 });
 
+let shuttingDown = false;
 
-async function startConsumer() {
+async function processEvent(event) {
+    const camera = await prisma.camera.findUnique({
+        where: {
+            cameraId: event.camera_id
+        }
+    });
 
-    await redisClient.connect();
+    if (!camera) {
+        throw new Error(
+            `Camera not found: ${event.camera_id}`
+        );
+    }
+
+    const seat = await prisma.seat.findUnique({
+        where: {
+            cameraId_seatId: {
+                cameraId: camera.id,
+                seatId: event.seat_id
+            }
+        }
+    });
+
+    if (!seat) {
+        throw new Error(
+            `Seat not found: ${event.seat_id}`
+        );
+    }
+
+    await prisma.$transaction([
+        prisma.seat.update({
+            where: {
+                id: seat.id
+            },
+            data: {
+                state: event.state
+            }
+        }),
+
+        prisma.seatEvent.create({
+            data: {
+                seatId: seat.id,
+                cameraId: camera.id,
+                state: event.state,
+                timestamp: new Date(
+                    Number(event.timestamp) * 1000
+                )
+            }
+        })
+    ]);
 
     console.log(
-        "Connected to Redis"
+        `Database updated: ${event.camera_id} / ${event.seat_id} → ${event.state}`
     );
+}
 
+async function startConsumer() {
+    await redisClient.connect();
+
+    console.log("Connected to Redis");
 
     const streamName = "seat_occupancy_events";
-
     const groupName = "backend_consumers";
-
     const consumerName = "backend_01";
 
-
-    // ==========================================
-    // CREATE CONSUMER GROUP
-    // ==========================================
-
     try {
-
         await redisClient.xGroupCreate(
             streamName,
             groupName,
@@ -47,78 +104,44 @@ async function startConsumer() {
             }
         );
 
-        console.log(
-            "Consumer group created"
-        );
+        console.log("Consumer group created");
 
     } catch (error) {
-
-        // BUSYGROUP means the group already exists
-        if (
-            !error.message.includes(
-                "BUSYGROUP"
-            )
-        ) {
-
+        if (!error.message.includes("BUSYGROUP")) {
             throw error;
-
         }
 
-        console.log(
-            "Consumer group already exists"
-        );
+        console.log("Consumer group already exists");
     }
 
+    console.log("Waiting for occupancy events...");
 
-    // ==========================================
-    // CONTINUOUS CONSUMPTION
-    // ==========================================
-
-    console.log(
-        "Waiting for occupancy events..."
-    );
-
-
-    while (true) {
-
+    while (!shuttingDown) {
         try {
-
             const result =
                 await redisClient.xReadGroup(
-
                     groupName,
-
                     consumerName,
-
                     {
                         key: streamName,
                         id: ">"
                     },
-
                     {
                         COUNT: 10,
                         BLOCK: 5000
                     }
                 );
 
-
-            // No event arrived during BLOCK period
-            if (!result) {
-
+            if (!result || shuttingDown) {
                 continue;
             }
 
-
-            // ==================================
-            // PROCESS EVENTS
-            // ==================================
-
             for (const stream of result) {
+                for (const message of stream.messages) {
 
-                for (
-                    const message
-                    of stream.messages
-                ) {
+                    if (shuttingDown) {
+                        break;
+                    }
 
                     console.log(
                         "\n------------------------------"
@@ -134,43 +157,89 @@ async function startConsumer() {
                         message.message
                     );
 
+                    try {
+                        await processEvent(
+                            message.message
+                        );
 
-                    // ------------------------------
-                    // BUSINESS LOGIC WILL COME HERE
-                    // ------------------------------
+                        await redisClient.xAck(
+                            streamName,
+                            groupName,
+                            message.id
+                        );
 
-                    console.log(
-                        "Processing event..."
-                    );
+                        console.log(
+                            "Event acknowledged."
+                        );
 
+                    } catch (error) {
 
-                    // ------------------------------
-                    // ACKNOWLEDGE EVENT
-                    // ------------------------------
+                        console.error(
+                            "Event processing failed:",
+                            error.message
+                        );
 
-                    await redisClient.xAck(
-                        streamName,
-                        groupName,
-                        message.id
-                    );
-
-
-                    console.log(
-                        "Event acknowledged."
-                    );
+                        console.log(
+                            "Message NOT acknowledged. It remains pending."
+                        );
+                    }
                 }
             }
 
         } catch (error) {
 
-            console.error(
-                "Error while consuming:",
-                error
-            );
-
+            if (!shuttingDown) {
+                console.error(
+                    "Error while consuming:",
+                    error
+                );
+            }
         }
     }
 }
 
+async function shutdown() {
+    if (shuttingDown) {
+        return;
+    }
 
-startConsumer();
+    shuttingDown = true;
+
+    console.log("\nShutting down consumer...");
+
+    try {
+        if (redisClient.isOpen) {
+            await redisClient.quit();
+        }
+
+        await prisma.$disconnect();
+
+        console.log("Consumer shut down cleanly.");
+
+    } catch (error) {
+        console.error(
+            "Error during shutdown:",
+            error
+        );
+    }
+
+    process.exit(0);
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
+startConsumer().catch(async (error) => {
+    console.error(
+        "Consumer failed to start:",
+        error
+    );
+
+    await prisma.$disconnect();
+
+    if (redisClient.isOpen) {
+        await redisClient.quit();
+    }
+
+    process.exit(1);
+});

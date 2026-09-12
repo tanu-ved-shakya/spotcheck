@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model Camera {
+  id        Int      @id @default(autoincrement())
+  cameraId  String   @unique
+  name      String?
+  status    String   @default("ONLINE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  seats     Seat[]
+  events    SeatEvent[]
+}
+
+model Seat {
+  id        Int      @id @default(autoincrement())
+  seatId    String
+  cameraId  Int
+  roi       Json
+  state     String   @default("AVAILABLE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  camera    Camera   @relation(fields: [cameraId], references: [id])
+  events    SeatEvent[]
+
+  @@unique([cameraId, seatId])
+}
+
+model SeatEvent {
+  id        BigInt   @id @default(autoincrement())
+  seatId    Int
+  cameraId  Int
+  state     String
+  timestamp DateTime @default(now())
+
+  seat      Seat     @relation(fields: [seatId], references: [id])
+  camera    Camera   @relation(fields: [cameraId], references: [id])
+
+  @@index([seatId])
+  @@index([cameraId])
+  @@index([timestamp])
+}
